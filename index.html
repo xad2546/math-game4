@@ -1,0 +1,253 @@
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var LEVELS={
+    easy:{name:'ง่าย',desc:'บวก ลบ เลขไม่เกิน 20'},
+    mid:{name:'ปานกลาง',desc:'บวก ลบ คูณ เลขไม่เกิน 60'},
+    hard:{name:'ยาก',desc:'เลขใหญ่ขึ้น คูณถึง 12'}
+  };
+  var DURATION=60, level='easy', score=0, streak=0, correct=0, total=0, endAt=0, timer=null, locked=false, cur=null;
+
+  // ==========================================
+  // ตั้งค่า JSONBin.io ของคุณตรงนี้
+  // ==========================================
+  var BIN_ID = '6ae97942ac6210605a67c1fa ';
+  var API_KEY = '$2a$10$sz0VU5Fu5TqbP/Drpi.U.ejJQcCSW4NgrRynUP6b8vW586vPL67jC';
+  var remote = [], remoteOk = true; // เปิดใช้งานระบบคลาวด์ผ่าน JSONBin
+
+  function getBest(l){ return loadLocal().filter(function(e){ return e && e.level===l && (e.r||1)===round; }).reduce(function(m,e){ return Math.max(m,e.score); },0); }
+  function setBest(l,v){ try{ localStorage.setItem('mathgame-best-'+l,String(v)); }catch(e){} }
+  function rnd(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+  function shuffle(a){ for(var i=a.length-1;i>0;i--){ var j=rnd(0,i), t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+
+  function gen(l){
+    var ops = l==='easy' ? ['+','−'] : ['+','−','×'];
+    var op = ops[rnd(0,ops.length-1)], a, b, ans;
+    if(op==='×'){
+      var m = l==='hard' ? 12 : 9; a=rnd(l==='hard'?3:2,m); b=rnd(l==='hard'?3:2,m); ans=a*b;
+    } else {
+      var lo = l==='easy'?1:(l==='mid'?10:20), hi = l==='easy'?(op==='+'?10:20):(l==='mid'?60:99);
+      a=rnd(lo,hi); b=rnd(lo<10?1:10,hi);
+      if(op==='+'){ ans=a+b; } else { if(b>a){ var t=a; a=b; b=t; } ans=a-b; }
+    }
+    var opts={}; opts[ans]=1;
+    var tries=0, deltas=[-10,-2,-1,1,2,10];
+    while(Object.keys(opts).length<4 && tries<60){
+      tries++;
+      var d = tries<20 ? deltas[rnd(0,deltas.length-1)] : rnd(1,12)*(Math.random()<.5?-1:1);
+      var v = ans+d; if(v>=0) opts[v]=1;
+    }
+    return {text:a+' '+op+' '+b, ans:ans, choices:shuffle(Object.keys(opts).map(Number))};
+  }
+
+  function show(id){ ['start','play','end','boardv'].forEach(function(s){ $('#'+s).hidden = s!==id; }); }
+
+  function renderLevels(){
+    var box=$('#levels'); box.innerHTML='';
+    Object.keys(LEVELS).forEach(function(k,i){
+      var b=document.createElement('button'), best=getBest(k);
+      b.innerHTML='<span><b><span class="st">'+'★★★'.slice(0,i+1)+'</span> '+LEVELS[k].name+'</b><small>'+LEVELS[k].desc+'</small></span>'+(best?'<span class="best">สูงสุด '+best+'</span>':'');
+      b.onclick=function(){ start(k); };
+      box.appendChild(b);
+    });
+  }
+
+  function next(){
+    locked=false; cur=gen(level); var qe=$('#q'); qe.textContent=cur.text+' = ?'; qe.classList.remove('pop'); void qe.offsetWidth; qe.classList.add('pop'); $('#msg').textContent='';
+    var box=$('#ans'); box.innerHTML='';
+    cur.choices.forEach(function(c,i){
+      var b=document.createElement('button'); b.textContent=c; b.dataset.v=c;
+      b.setAttribute('aria-label','ตัวเลือก '+(i+1)+': '+c);
+      b.onclick=function(){ pick(b,c); }; box.appendChild(b);
+    });
+  }
+
+  function pick(btn,v){
+    if(locked) return; locked=true; total++;
+    var all=$('#ans').children;
+    for(var i=0;i<all.length;i++) all[i].disabled=true;
+    if(v===cur.ans){
+      correct++; streak++; var gain=10+Math.min(streak-1,5)*2; score+=gain;
+      btn.classList.add('good'); $('#msg').textContent='+'+gain+(streak>=3?'  ติดกัน '+streak+' ข้อ':'');
+      setTimeout(function(){ if(timer) next(); },380);
+    } else {
+      streak=0; btn.classList.add('bad');
+      for(var j=0;j<all.length;j++) if(Number(all[j].dataset.v)===cur.ans) all[j].classList.add('good');
+      $('#msg').textContent='คำตอบคือ '+cur.ans;
+      setTimeout(function(){ if(timer) next(); },900);
+    }
+    $('#score').textContent=score; $('#streak').textContent=streak;
+  }
+
+  function tick(){
+    var left=Math.max(0,endAt-Date.now());
+    $('#time').textContent=Math.ceil(left/1000);
+    var bar=$('#bar'); bar.firstElementChild.style.width=(left/(DURATION*1000)*100)+'%';
+    bar.classList.toggle('low', left<10000);
+    if(left<=0) finish();
+  }
+
+  function start(l){
+    var nm1=getName(); if(roundComplete()) newRound(); try{ localStorage.setItem('mathgame-name',nm1); }catch(e){}
+    level=l; score=0; streak=0; correct=0; total=0;
+    $('#score').textContent=0; $('#streak').textContent=0;
+    show('play'); next();
+    endAt=Date.now()+DURATION*1000; clearInterval(timer); timer=setInterval(tick,100); tick();
+  }
+
+  function finish(){
+    clearInterval(timer); timer=null; locked=true;
+    var best=getBest(level), isNew=score>best; if(isNew) setBest(level,score);
+    var rl='';
+    if(score>0){
+      var me={name:getName(),score:score,level:level,correct:correct,total:total,ts:Date.now()};
+      saveScore(me);
+      var others=remote.filter(function(e){ return e && e.level===level && e.ts!==me.ts && (e.r||1)===round; });
+      var ahead=others.filter(function(e){ return e.score>score; }).length;
+      rl='อันดับที่ <b>'+(ahead+1)+'</b> จากทั้งหมด '+(others.length+1)+' รอบในระดับ'+LEVELS[level].name;
+    }
+    $('#rankline').innerHTML=rl;
+    var nm0=getName(); if(played.indexOf(nm0)<0) played.push(nm0); saveRound(); renderRoster();
+    $('#roundmsg').textContent = roundComplete() ? 'ทุกคนเล่นครบรอบที่ '+round+' แล้ว เริ่มเกมต่อไปเพื่อล้างสกอร์บอร์ดและเริ่มรอบใหม่' : '';
+    $('#final').textContent=score;
+    var n=correct>=22?3:correct>=15?2:correct>=8?1:0;
+    $('#stars').innerHTML=[0,1,2].map(function(j){ return '<span'+(j<n?' class="on"':'')+'>★</span>'; }).join('');
+    $('#summary').textContent='ตอบถูก '+correct+' จาก '+total+' ข้อ ระดับ'+LEVELS[level].name;
+    $('#bestline').textContent = score===0 ? '' : (isNew ? 'คะแนนสูงสุดใหม่' : 'คะแนนสูงสุดของระดับนี้ '+best);
+    show('end');
+  }
+
+  $('#again').onclick=function(){ start(level); };
+  var lastTs=0, bl='easy';
+  var round=1, played=[], rt=null;
+  try{ round=parseInt(localStorage.getItem('mathgame-round'),10)||1; played=JSON.parse(localStorage.getItem('mathgame-played'))||[]; }catch(e){}
+  function saveRound(){ try{ localStorage.setItem('mathgame-round',String(round)); localStorage.setItem('mathgame-played',JSON.stringify(played)); }catch(e){} }
+  function roundComplete(){ return players.length>=2 && players.every(function(p){ return played.indexOf(p)>=0; }); }
+  function newRound(){ round++; played=[]; lastTs=0; saveRound(); renderRoster(); }
+  $('#resetBtn').onclick=function(){
+    var b=this;
+    if(rt){ clearTimeout(rt); rt=null; b.textContent='เริ่มรอบใหม่'; newRound(); renderBoard(); return; }
+    b.textContent='กดอีกครั้งเพื่อยืนยัน';
+    rt=setTimeout(function(){ rt=null; b.textContent='เริ่มรอบใหม่'; },4000);
+  };
+  function loadLocal(){ try{ return JSON.parse(localStorage.getItem('mathgame-scores'))||[]; }catch(e){ return []; } }
+  function getName(){ if($('#name').value.trim()) addPlayer(); return player||'ผู้เล่น'; }
+
+  // ==========================================
+  // ฟังก์ชันเชื่อมต่อ JSONBin (ดึงและบันทึกคะแนน)
+  // ==========================================
+  function fetchRemoteScores(callback) {
+    fetch('https://api.jsonbin.io/v3/b/' + BIN_ID + '/latest', {
+      headers: { 'X-Master-Key': API_KEY }
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+      var scores = (data.record && data.record.scores) ? data.record.scores : [];
+      remote = scores;
+      if (callback) callback(scores);
+    })
+    .catch(function(err) {
+      console.error('Error fetching scores:', err);
+      if (callback) callback([]);
+    });
+  }
+
+  function saveScore(e){
+    lastTs=e.ts;
+    fetchRemoteScores(function(currentScores){
+      e.r = round;
+      currentScores.push(e);
+      if (currentScores.length > 300) {
+        currentScores = currentScores.slice(-300);
+      }
+
+      fetch('https://api.jsonbin.io/v3/b/' + BIN_ID, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY
+        },
+        body: JSON.stringify({ scores: currentScores })
+      })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        remote = currentScores;
+        if (!$('#boardv').hidden) renderBoard();
+      })
+      .catch(function(err){ console.error('Error saving score:', err); });
+    });
+  }
+
+  function renderBoard(){
+    var tabs=$('#tabs'); tabs.innerHTML='';
+    Object.keys(LEVELS).forEach(function(k){
+      var b=document.createElement('button'); b.textContent=LEVELS[k].name; if(k===bl) b.className='on';
+      b.onclick=function(){ bl=k; renderBoard(); }; tabs.appendChild(b);
+    });
+
+    // ดึงข้อมูลล่าสุดมาแสดงผลทุกครั้งที่เปิดหน้าสกอร์บอร์ด
+    fetchRemoteScores(function(listScores){
+      var ul=$('#rank'); ul.innerHTML='';
+      var list=listScores.filter(function(e){ return e && e.level===bl && (e.r||1)===round; })
+        .sort(function(a,b){ return b.score-a.score; }).slice(0,10);
+      
+      if(!list.length){ 
+        var em=document.createElement('li'); em.className='empty'; em.textContent='ยังไม่มีใครทำคะแนนในระดับนี้'; ul.appendChild(em); 
+      }
+      
+      list.forEach(function(e,i){
+        var li=document.createElement('li'); if(lastTs && e.ts===lastTs) li.className='me';
+        li.innerHTML='<span class="n"></span><span class="nm"></span><span class="sc"></span>';
+        li.children[0].textContent=i+1; li.children[1].textContent=e.name||'ผู้เล่น'; li.children[2].textContent=e.score;
+        ul.appendChild(li);
+      });
+    });
+
+    $('#note').textContent = 'ตารางรวมออนไลน์ ทุกคนที่เปิดลิงก์นี้เห็นคะแนนเดียวกัน (รอบที่ '+round+')';
+    $('#resetBtn').hidden = false;
+  }
+
+  function openBoard(l){ if(l) bl=l; renderBoard(); show('boardv'); }
+  $('#toBoard').onclick=function(){ openBoard(); };
+  $('#endBoard').onclick=function(){ openBoard(level); };
+  $('#back').onclick=function(){ renderLevels(); show('start'); };
+  
+  var players=[], player='';
+  try{ players=JSON.parse(localStorage.getItem('mathgame-players'))||[]; player=localStorage.getItem('mathgame-name')||''; }catch(e){}
+  if(player && players.indexOf(player)<0) players.push(player);
+  function savePlayers(){ try{ localStorage.setItem('mathgame-players',JSON.stringify(players)); localStorage.setItem('mathgame-name',player); }catch(e){} }
+  
+  function renderRoster(){
+    var box=$('#roster'); box.innerHTML='';
+    players.forEach(function(n){
+      var c=document.createElement('span'); c.className='chip'+(n===player?' on':'');
+      var b=document.createElement('button'); b.textContent=(played.indexOf(n)>=0?'✓ ':'')+n; b.setAttribute('aria-pressed',String(n===player));
+      b.onclick=function(){ player=n; savePlayers(); renderRoster(); };
+      var x=document.createElement('button'); x.className='x'; x.textContent='×'; x.setAttribute('aria-label','ลบ '+n);
+      x.onclick=function(){ players=players.filter(function(p){ return p!==n; }); if(player===n) player=players[0]||''; savePlayers(); renderRoster(); };
+      c.appendChild(b); c.appendChild(x); box.appendChild(c);
+    });
+    $('#who').textContent = player ? 'กำลังเล่น: '+player : (players.length ? 'แตะชื่อเพื่อเลือกผู้เล่น' : 'เพิ่มชื่อผู้เล่น แล้วเลือกระดับเพื่อเริ่มเล่น');
+  }
+  
+  function addPlayer(){
+    var inp=$('#name'), n=inp.value.trim().slice(0,16); if(!n) return;
+    if(players.indexOf(n)<0) players.push(n);
+    player=n; inp.value=''; savePlayers(); renderRoster();
+  }
+  
+  $('#addBtn').onclick=addPlayer;
+  $('#name').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); addPlayer(); } });
+  renderRoster();
+
+  $('#menu').onclick=function(){ renderLevels(); show('start'); };
+  document.addEventListener('keydown',function(e){
+    if($('#play').hidden||locked) return;
+    var n=parseInt(e.key,10);
+    if(n>=1&&n<=4){ var b=$('#ans').children[n-1]; if(b) b.click(); }
+  });
+  
+  // โหลดข้อมูลเริ่มต้นเตรียมไว้ตอนเปิดเว็บ
+  fetchRemoteScores(function(){ renderLevels(); });
+})();
+</script>
